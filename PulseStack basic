@@ -1,0 +1,724 @@
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  Flame,
+  Eye,
+  Clock,
+  Bookmark,
+  BookmarkCheck,
+  X,
+  Layers,
+  Menu,
+  ArrowBigUp,
+  MessageSquare,
+  ExternalLink,
+  Sparkles,
+  ChevronDown,
+  RefreshCw,
+} from "lucide-react";
+
+// --- UTILS & TYPES ---
+
+function cn(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function extractDomain(url) {
+  if (!url) return "news.ycombinator.com";
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "news.ycombinator.com";
+  }
+}
+
+function timeAgo(unixTimestamp) {
+  const seconds = Math.floor(Date.now() / 1000 - unixTimestamp);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+  return `${Math.floor(seconds / 604800)}w ago`;
+}
+
+function processStory(story) {
+  return {
+    id: story.id,
+    title: story.title,
+    url: story.url || `https://news.ycombinator.com/item?id=${story.id}`,
+    domain: extractDomain(story.url),
+    score: story.score,
+    author: story.by,
+    time: story.time,
+    commentCount: story.descendants ?? 0,
+    relativeTime: timeAgo(story.time),
+  };
+}
+
+// --- SUMMARIES ---
+
+const cache = {};
+
+const keywordBullets = {
+  ai: [
+    [
+      "Explores recent breakthroughs in model architecture and the scaling laws driving performance gains across benchmarks.",
+      "Examines the trade-offs between inference cost and capability, with practical guidance for production deployment.",
+      "Discusses alignment challenges and the evolving regulatory landscape shaping how these systems reach end users.",
+    ],
+  ],
+  rust: [
+    [
+      "Benchmarks Rust against C/C++ in latency-critical workloads, showing competitive throughput with far fewer memory bugs.",
+      "Walks through migration strategies for incrementally adopting Rust in existing codebases without full rewrites.",
+      "Highlights ecosystem maturity — async runtimes, FFI tooling, and the crate registry — as key adoption drivers.",
+    ],
+  ],
+  startup: [
+    [
+      "Profiles the founding team's unconventional path to product-market fit and the early signals that validated demand.",
+      "Breaks down the go-to-market strategy, contrasting bottom-up developer adoption with traditional enterprise sales.",
+      "Analyzes unit economics and funding dynamics in the current macro environment for early-stage companies.",
+    ],
+  ],
+  security: [
+    [
+      "Details a novel attack vector that exploits an interaction between protocol layers, bypassing standard audit checks.",
+      "Provides a timeline from responsible disclosure through patch rollout, with affected versions and CVE references.",
+      "Offers mitigation strategies and discusses broader implications for software supply-chain integrity.",
+    ],
+  ],
+  linux: [
+    [
+      "Covers kernel-level changes that improve scheduling efficiency and reduce tail latencies under high-concurrency workloads.",
+      "Benchmarks the new release against the previous LTS, with measurable gains in I/O throughput and memory management.",
+      "Notes the growing adoption of eBPF for observability and networking, with real-world deployment examples.",
+    ],
+  ],
+  web: [
+    [
+      "Surveys new browser APIs and platform primitives closing the gap between web and native application performance.",
+      "Compares leading frameworks on bundle size, hydration cost, and developer ergonomics with reproducible benchmarks.",
+      "Considers how WebAssembly and edge compute are reshaping what's possible in client-side applications.",
+    ],
+  ],
+  science: [
+    [
+      "Presents experimental results that challenge prevailing theoretical models, opening new avenues for investigation.",
+      "Methodology innovations enable measurements at previously inaccessible scales, with peer-validated reproducibility.",
+      "Discusses potential technology transfer pathways and the follow-up studies needed before practical application.",
+    ],
+  ],
+};
+
+const fallback = [
+  "Examines a notable development in the tech ecosystem, contextualizing it against recent industry trends and market dynamics.",
+  "Provides technical depth on the implementation details, with comparisons to alternative approaches and their trade-offs.",
+  "Considers second-order effects on developer workflows, open-source communities, and the broader competitive landscape.",
+];
+
+function matchBullets(title) {
+  const lower = title.toLowerCase();
+  for (const [keyword, sets] of Object.entries(keywordBullets)) {
+    if (lower.includes(keyword)) {
+      return sets[Math.floor(Math.random() * sets.length)];
+    }
+  }
+  return fallback;
+}
+
+async function generateSummary(storyId, title) {
+  if (cache[storyId]) return cache[storyId];
+  await new Promise((r) => setTimeout(r, 700 + Math.random() * 800));
+  const bullets = matchBullets(title);
+  cache[storyId] = bullets;
+  return bullets;
+}
+
+// --- COMPONENTS ---
+
+const feeds = [
+  { key: "top", label: "Trending", icon: Flame },
+  { key: "show", label: "Show HN", icon: Eye },
+  { key: "new", label: "New", icon: Clock },
+];
+
+function Sidebar({
+  activeCategory,
+  onCategoryChange,
+  showBookmarks,
+  onShowBookmarks,
+  bookmarkCount,
+  isOpen,
+  onClose,
+}) {
+  return (
+    <>
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
+          onClick={onClose}
+        />
+      )}
+      <aside
+        className={cn(
+          "fixed top-0 left-0 h-full w-64 z-50",
+          "bg-[#050507] border-r border-zinc-800/50",
+          "transition-transform duration-300 ease-out",
+          "lg:translate-x-0 lg:static lg:z-auto",
+          isOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+      >
+        <div className="flex flex-col h-full p-5">
+          <div className="flex items-center justify-between mb-10">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center">
+                <Layers className="w-4 h-4 text-black" strokeWidth={2.5} />
+              </div>
+              <span className="font-display font-bold text-lg tracking-tight text-zinc-50">
+                PulseStack
+              </span>
+            </div>
+            <button
+              onClick={onClose}
+              className="lg:hidden p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+              aria-label="Close sidebar"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="mb-8">
+            <p className="text-[11px] font-mono font-medium text-zinc-600 uppercase tracking-[0.15em] mb-3 select-none">
+              Feeds
+            </p>
+            <nav className="space-y-1">
+              {feeds.map(({ key, label, icon: Icon }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    onCategoryChange(key);
+                    onClose();
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg",
+                    "text-sm font-mono transition-all duration-200",
+                    !showBookmarks && activeCategory === key
+                      ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 border border-transparent"
+                  )}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  {label}
+                </button>
+              ))}
+            </nav>
+          </div>
+
+          <div className="mb-6">
+            <p className="text-[11px] font-mono font-medium text-zinc-600 uppercase tracking-[0.15em] mb-3 select-none">
+              Library
+            </p>
+            <button
+              onClick={() => {
+                onShowBookmarks();
+                onClose();
+              }}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg",
+                "text-sm font-mono transition-all duration-200",
+                showBookmarks
+                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 border border-transparent"
+              )}
+            >
+              {showBookmarks ? (
+                <BookmarkCheck className="w-4 h-4 shrink-0" />
+              ) : (
+                <Bookmark className="w-4 h-4 shrink-0" />
+              )}
+              <span className="flex-1 text-left">Bookmarks</span>
+              {bookmarkCount > 0 && (
+                <span className="text-[10px] font-mono bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded-full tabular-nums">
+                  {bookmarkCount}
+                </span>
+              )}
+            </button>
+          </div>
+
+          <div className="mt-auto pt-6 border-t border-zinc-800/50">
+            <p className="text-[10px] font-mono text-zinc-700 leading-relaxed">
+              Powered by the Hacker News API
+              <br />
+              Built with Next.js & Tailwind
+            </p>
+          </div>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function Header({ onMenuClick, title }) {
+  return (
+    <header className="sticky top-0 z-30 bg-[#09090b]/80 backdrop-blur-xl border-b border-zinc-800/50">
+      <div className="flex items-center gap-3 px-4 py-4 lg:px-8">
+        <button
+          onClick={onMenuClick}
+          className="lg:hidden p-2 -ml-2 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+          aria-label="Open sidebar"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+
+        <div className="flex items-center gap-2 lg:hidden">
+          <div className="w-7 h-7 rounded-md bg-amber-500 flex items-center justify-center">
+            <Layers className="w-3.5 h-3.5 text-black" strokeWidth={2.5} />
+          </div>
+          <span className="font-display font-bold text-sm tracking-tight text-zinc-50">
+            PulseStack
+          </span>
+        </div>
+
+        <h1 className="hidden lg:block font-display font-bold text-xl text-zinc-50 tracking-tight">
+          {title}
+        </h1>
+      </div>
+    </header>
+  );
+}
+
+function FeedCard({ story, index, isBookmarked, onToggleBookmark }) {
+  const [loading, setLoading] = useState(false);
+  const [bullets, setBullets] = useState([]);
+  const [expanded, setExpanded] = useState(false);
+  const [error, setError] = useState(false);
+
+  const handleSummarize = async () => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    if (bullets.length > 0) {
+      setExpanded(true);
+      return;
+    }
+
+    setLoading(true);
+    setError(false);
+    try {
+      const result = await generateSummary(story.id, story.title);
+      setBullets(result);
+      setExpanded(true);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const stagger = `stagger-${Math.min(index + 1, 10)}`;
+
+  return (
+    <article
+      className={cn(
+        "animate-fade-up group",
+        stagger,
+        "bg-zinc-900/50 border border-zinc-800/50 rounded-xl",
+        "card-glow mb-4"
+      )}
+    >
+      <div className="p-5">
+        <div className="flex items-start gap-4">
+          <div className="flex flex-col items-center gap-0.5 pt-0.5 shrink-0">
+            <ArrowBigUp className="w-5 h-5 text-orange-400/80" />
+            <span className="font-mono text-xs font-medium text-orange-400 tabular-nums">
+              {story.score >= 1000
+                ? `${(story.score / 1000).toFixed(1)}k`
+                : story.score}
+            </span>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <a
+              href={story.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group/link"
+            >
+              <h2 className="font-display font-semibold text-[15px] leading-snug text-zinc-100 group-hover/link:text-amber-400 transition-colors duration-200">
+                {story.title}
+              </h2>
+            </a>
+
+            <div className="flex items-center gap-2.5 mt-2.5 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-zinc-500 bg-zinc-800/60 px-2 py-0.5 rounded-md">
+                <ExternalLink className="w-3 h-3" />
+                {story.domain}
+              </span>
+              <span className="text-[11px] font-mono text-zinc-600">
+                {story.author}
+              </span>
+              <span className="text-[11px] font-mono text-zinc-600">
+                {story.relativeTime}
+              </span>
+              <span className="inline-flex items-center gap-1 text-[11px] font-mono text-zinc-600">
+                <MessageSquare className="w-3 h-3" />
+                {story.commentCount}
+              </span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onToggleBookmark(story)}
+            className={cn(
+              "p-2 rounded-lg transition-all duration-200 shrink-0",
+              isBookmarked
+                ? "text-amber-400 bg-amber-500/10 hover:bg-amber-500/20"
+                : "text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800"
+            )}
+            aria-label={isBookmarked ? "Remove bookmark" : "Bookmark"}
+          >
+            {isBookmarked ? (
+              <BookmarkCheck className="w-4 h-4" />
+            ) : (
+              <Bookmark className="w-4 h-4" />
+            )}
+          </button>
+        </div>
+
+        <div className="mt-4">
+          <button
+            onClick={handleSummarize}
+            disabled={loading}
+            className={cn(
+              "inline-flex items-center gap-2 px-3.5 py-2 rounded-lg",
+              "text-xs font-mono font-medium transition-all duration-200",
+              expanded
+                ? "bg-amber-500/15 text-amber-400 border border-amber-500/20"
+                : "bg-zinc-800/80 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 border border-zinc-700/50",
+              loading && "opacity-60 cursor-wait"
+            )}
+          >
+            <Sparkles
+              className={cn("w-3.5 h-3.5", loading && "animate-spin-slow")}
+            />
+            {loading
+              ? "Analyzing..."
+              : expanded
+              ? "Hide Summary"
+              : bullets.length > 0
+              ? "View Summary"
+              : "Summarize"}
+            {(expanded || bullets.length > 0) && !loading && (
+              <ChevronDown
+                className={cn(
+                  "w-3 h-3 transition-transform duration-300",
+                  expanded && "rotate-180"
+                )}
+              />
+            )}
+          </button>
+        </div>
+
+        <div
+          className={cn(
+            "grid transition-all duration-[400ms] ease-out",
+            expanded
+              ? "grid-rows-[1fr] opacity-100 mt-4"
+              : "grid-rows-[0fr] opacity-0 mt-0"
+          )}
+        >
+          <div className="overflow-hidden min-h-0">
+            <div className="bg-zinc-950/70 border border-zinc-800/50 rounded-lg p-4">
+              <p className="text-[10px] font-mono font-medium text-amber-500/60 uppercase tracking-[0.15em] mb-3 select-none">
+                AI Summary
+              </p>
+              {error ? (
+                <p className="text-xs font-mono text-red-400">
+                  Couldn't generate a summary. Try again.
+                </p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {bullets.map((b, i) => (
+                    <li
+                      key={i}
+                      className="flex gap-2.5 text-xs font-mono leading-relaxed text-zinc-400"
+                    >
+                      <span className="text-amber-500/40 shrink-0 mt-px">
+                        &#x2022;
+                      </span>
+                      {b}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-5 mb-4">
+      <div className="flex items-start gap-4">
+        <div className="flex flex-col items-center gap-1.5 shrink-0">
+          <div className="w-5 h-5 rounded skeleton-shimmer" />
+          <div className="w-6 h-3 rounded skeleton-shimmer" />
+        </div>
+        <div className="flex-1 space-y-3">
+          <div className="h-5 w-4/5 rounded skeleton-shimmer" />
+          <div className="h-4 w-3/5 rounded skeleton-shimmer" />
+          <div className="flex gap-2 pt-0.5">
+            <div className="h-5 w-28 rounded-md skeleton-shimmer" />
+            <div className="h-5 w-16 rounded-md skeleton-shimmer" />
+            <div className="h-5 w-14 rounded-md skeleton-shimmer" />
+          </div>
+        </div>
+        <div className="w-9 h-9 rounded-lg skeleton-shimmer shrink-0" />
+      </div>
+      <div className="mt-4">
+        <div className="h-9 w-32 rounded-lg skeleton-shimmer" />
+      </div>
+    </div>
+  );
+}
+
+// --- MAIN APP COMPONENT ---
+
+const titles = {
+  top: "Trending",
+  show: "Show HN",
+  new: "New",
+};
+
+const BASE = "https://hacker-news.firebaseio.com/v0";
+const endpoints = {
+  top: "topstories",
+  show: "showstories",
+  new: "newstories",
+};
+
+export default function App() {
+  const [category, setCategory] = useState("top");
+  const [showBookmarks, setShowBookmarks] = useState(false);
+  const [stories, setStories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const [bmIds, setBmIds] = useState(new Set());
+  const [bmStories, setBmStories] = useState([]);
+
+  // Fetch feed directly from Firebase
+  const fetchFeed = useCallback(async (cat) => {
+    setLoading(true);
+    setError(false);
+    try {
+      const endpoint = endpoints[cat] || "topstories";
+      const idsRes = await fetch(`${BASE}/${endpoint}.json`);
+      if (!idsRes.ok) throw new Error("Fetch failed");
+      
+      const ids = await idsRes.json();
+      const slice = ids.slice(0, 10);
+      
+      const storyPromises = slice.map(async (id) => {
+        const res = await fetch(`${BASE}/item/${id}.json`);
+        return res.json();
+      });
+      
+      const rawStories = await Promise.all(storyPromises);
+      const processed = rawStories
+        .filter((s) => s !== null && s.type === "story")
+        .map(processStory);
+        
+      setStories(processed);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!showBookmarks) fetchFeed(category);
+  }, [category, showBookmarks, fetchFeed]);
+
+  const handleCategory = (c) => {
+    setCategory(c);
+    setShowBookmarks(false);
+  };
+
+  const handleShowBookmarks = () => {
+    setShowBookmarks(true);
+  };
+
+  const handleToggleBookmark = (story) => {
+    const isBookmarked = bmIds.has(story.id);
+    let updated;
+    
+    if (isBookmarked) {
+      updated = bmStories.filter((b) => b.id !== story.id);
+    } else {
+      updated = [...bmStories, story];
+    }
+    
+    setBmIds(new Set(updated.map((b) => b.id)));
+    setBmStories(updated);
+  };
+
+  const pageTitle = showBookmarks ? "Bookmarks" : titles[category];
+  const display = showBookmarks ? bmStories : stories;
+
+  return (
+    <>
+      {/* Inject custom styles that were present in globals.css and tailwind config */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Syne:wght@400;500;600;700;800&display=swap');
+        
+        body {
+          background: #09090b;
+          color: #fafafa;
+          font-family: "DM Mono", monospace;
+          margin: 0;
+        }
+
+        .font-display { font-family: "Syne", sans-serif; }
+        .font-mono { font-family: "DM Mono", monospace; }
+
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+
+        .card-glow { transition: box-shadow 0.35s ease, border-color 0.35s ease; }
+        .card-glow:hover {
+          box-shadow: 0 0 40px rgba(245, 158, 11, 0.05), 0 0 80px rgba(245, 158, 11, 0.02);
+          border-color: #3f3f46;
+        }
+
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        .skeleton-shimmer {
+          background: linear-gradient(90deg, #18181b 25%, #27272a 50%, #18181b 75%);
+          background-size: 200% 100%;
+          animation: shimmer 1.8s infinite;
+        }
+
+        @keyframes fadeUp {
+          0% { opacity: 0; transform: translateY(14px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-up { animation: fadeUp 0.5s ease both; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .animate-spin-slow { animation: spin 1.2s linear infinite; }
+
+        .stagger-1 { animation-delay: 0.04s; }
+        .stagger-2 { animation-delay: 0.08s; }
+        .stagger-3 { animation-delay: 0.12s; }
+        .stagger-4 { animation-delay: 0.16s; }
+        .stagger-5 { animation-delay: 0.2s; }
+        .stagger-6 { animation-delay: 0.24s; }
+        .stagger-7 { animation-delay: 0.28s; }
+        .stagger-8 { animation-delay: 0.32s; }
+        .stagger-9 { animation-delay: 0.36s; }
+        .stagger-10 { animation-delay: 0.4s; }
+      `}} />
+
+      <div className="flex h-screen overflow-hidden text-zinc-100 selection:bg-amber-500/30 selection:text-amber-200">
+        <Sidebar
+          activeCategory={category}
+          onCategoryChange={handleCategory}
+          showBookmarks={showBookmarks}
+          onShowBookmarks={handleShowBookmarks}
+          bookmarkCount={bmStories.length}
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+        />
+
+        <main className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <Header
+            onMenuClick={() => setSidebarOpen(true)}
+            title={pageTitle}
+          />
+
+          <div className="flex-1 overflow-y-auto">
+            <div className="max-w-3xl mx-auto px-4 py-6 lg:px-8 lg:py-8">
+              <div className="flex items-end justify-between mb-6">
+                <div>
+                  <h2 className="font-display font-bold text-2xl text-zinc-50 tracking-tight lg:hidden">
+                    {pageTitle}
+                  </h2>
+                  <p className="text-[11px] font-mono text-zinc-500 mt-1">
+                    {showBookmarks
+                      ? `${bmStories.length} saved article${bmStories.length !== 1 ? "s" : ""}`
+                      : `Top 10 · Hacker News · ${pageTitle}`}
+                  </p>
+                </div>
+
+                {!showBookmarks && (
+                  <button
+                    onClick={() => fetchFeed(category)}
+                    disabled={loading}
+                    className="p-2.5 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                    aria-label="Refresh"
+                  >
+                    <RefreshCw className={cn("w-4 h-4", loading && "animate-spin-slow")} />
+                  </button>
+                )}
+              </div>
+
+              {/* FINISHED YOUR CUT-OFF CODE BELOW */}
+              {error && (
+                <div className="bg-red-500/[0.07] border border-red-500/20 rounded-xl p-5 mb-6">
+                  <p className="text-sm font-mono text-red-400">
+                    Failed to load stories.
+                  </p>
+                  <button 
+                    onClick={() => fetchFeed(category)}
+                    className="mt-3 px-4 py-2 bg-red-500/10 text-red-400 rounded-lg text-xs font-medium hover:bg-red-500/20 transition"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              )}
+
+              {loading && !error && (
+                <div className="space-y-4">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <SkeletonCard key={i} />
+                  ))}
+                </div>
+              )}
+
+              {!loading && !error && (
+                <div className="space-y-4">
+                  {display.length === 0 && showBookmarks ? (
+                    <div className="text-center py-20 border border-dashed border-zinc-800 rounded-xl">
+                      <Bookmark className="w-8 h-8 text-zinc-600 mx-auto mb-3" />
+                      <p className="text-zinc-400 text-sm">No bookmarked stories yet.</p>
+                    </div>
+                  ) : (
+                    display.map((story, i) => (
+                      <FeedCard
+                        key={story.id}
+                        story={story}
+                        index={i}
+                        isBookmarked={bmIds.has(story.id)}
+                        onToggleBookmark={handleToggleBookmark}
+                      />
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </main>
+      </div>
+    </>
+  );
+}
